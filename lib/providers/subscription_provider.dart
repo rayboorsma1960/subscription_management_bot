@@ -12,13 +12,16 @@ class SubscriptionProvider with ChangeNotifier {
 
   List<Subscription> get subscriptions => _subscriptions;
 
+  double get totalMonthlyFees {
+    return _subscriptions.fold(0, (sum, subscription) => sum + subscription.price);
+  }
+
   Future<void> _fetchSubscriptions() async {
     try {
       _subscriptions = await _subscriptionService.getSubscriptions();
       notifyListeners();
     } catch (e) {
       print('Error fetching subscriptions: $e');
-      // You might want to handle this error more gracefully
     }
   }
 
@@ -29,7 +32,6 @@ class SubscriptionProvider with ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('Error adding subscription: $e');
-      // You might want to handle this error more gracefully
     }
   }
 
@@ -40,13 +42,9 @@ class SubscriptionProvider with ChangeNotifier {
         _subscriptions[index] = updatedSubscription;
         await _subscriptionService.saveSubscriptions(_subscriptions);
         notifyListeners();
-      } else {
-        print('Subscription not found for update');
-        // You might want to handle this case more gracefully
       }
     } catch (e) {
       print('Error updating subscription: $e');
-      // You might want to handle this error more gracefully
     }
   }
 
@@ -57,17 +55,6 @@ class SubscriptionProvider with ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('Error deleting subscription: $e');
-      // You might want to handle this error more gracefully
     }
-  }
-
-  double get totalMonthlyExpense {
-    return _subscriptions.fold(0, (sum, subscription) => sum + subscription.price);
-  }
-
-  List<Subscription> getUpcomingRenewals({int days = 7}) {
-    final now = DateTime.now();
-    final cutoff = now.add(Duration(days: days));
-    return _subscriptions.where((sub) => sub.billingDate.isBefore(cutoff)).toList();
   }
 }
