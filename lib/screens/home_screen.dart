@@ -6,6 +6,7 @@ import '../services/email_scanner_service.dart';
 import 'add_subscription_screen.dart';
 import 'edit_subscription_screen.dart';
 import 'select_email_screen.dart';
+import 'subscription_history_screen.dart';
 import 'package:googleapis/gmail/v1.dart' as gmail;
 
 class HomeScreen extends StatelessWidget {
@@ -84,6 +85,7 @@ class HomeScreen extends StatelessWidget {
                           icon: const Icon(Icons.edit),
                           onPressed: () => _editSubscription(context, subscription),
                         ),
+                        onTap: () => _viewSubscriptionHistory(context, subscription),
                       ),
                     );
                   },
@@ -101,9 +103,9 @@ class HomeScreen extends StatelessWidget {
   }
 
   void _addSubscription(BuildContext context) async {
+    final navigator = Navigator.of(context);
     final subscriptionProvider = Provider.of<SubscriptionProvider>(context, listen: false);
-    final result = await Navigator.push<Subscription>(
-      context,
+    final result = await navigator.push<Subscription>(
       MaterialPageRoute(builder: (context) => const AddSubscriptionScreen()),
     );
     if (result != null) {
@@ -121,12 +123,11 @@ class HomeScreen extends StatelessWidget {
   }
 
   void _selectSubscriptionEmail(BuildContext context) async {
-    final result = await Navigator.push<gmail.Message>(
-      context,
+    final navigator = Navigator.of(context);
+    final result = await navigator.push<gmail.Message>(
       MaterialPageRoute(builder: (context) => const SelectEmailScreen()),
     );
     if (result != null) {
-      // Process the selected email and create a subscription
       _processSelectedEmail(context, result);
     }
   }
@@ -141,7 +142,7 @@ class HomeScreen extends StatelessWidget {
     final from = email.payload?.headers
         ?.firstWhere((header) => header.name == 'From', orElse: () => gmail.MessagePartHeader())
         .value ?? '';
-    final body = emailScannerService.getEmailBody(email);  // Using the new public method
+    final body = emailScannerService.getEmailBody(email);
 
     // Extract subscription information
     final name = _extractSubscriptionName(subject, from, body);
@@ -159,11 +160,49 @@ class HomeScreen extends StatelessWidget {
       subscriptionProvider.addSubscription(newSubscription);
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Added subscription')),  // Added const
+        const SnackBar(content: Text('Added subscription')),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not extract subscription information from the email')),  // Added const
+        const SnackBar(content: Text('Could not extract subscription information from the email')),
+      );
+    }
+  }
+
+  void _viewSubscriptionHistory(BuildContext context, Subscription subscription) async {
+    final EmailScannerService emailScannerService = EmailScannerService();
+    final navigator = Navigator.of(context);
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return const Center(child: CircularProgressIndicator());
+      },
+    );
+
+    try {
+      // Fetch subscription history
+      final historyEmails = await emailScannerService.fetchSubscriptionHistory(subscription.name);
+
+      // Hide loading indicator
+      navigator.pop();
+
+      // Navigate to subscription history screen
+      navigator.push(
+        MaterialPageRoute(
+          builder: (context) => SubscriptionHistoryScreen(emails: historyEmails),
+        ),
+      );
+    } catch (e) {
+      // Hide loading indicator
+      navigator.pop();
+
+      // Show error message
+      scaffoldMessenger.showSnackBar(
+        const SnackBar(content: Text('Failed to fetch subscription history')),
       );
     }
   }
@@ -192,7 +231,7 @@ class HomeScreen extends StatelessWidget {
   DateTime? _extractBillingDate(String body) {
     // Implement logic to extract billing date
     // This is a placeholder and needs to be implemented based on email content
-    return DateTime.now().add(Duration(days: 30));  // Default to 30 days from now
+    return DateTime.now().add(const Duration(days: 30));  // Default to 30 days from now
   }
 
   String _formatDate(DateTime date) {

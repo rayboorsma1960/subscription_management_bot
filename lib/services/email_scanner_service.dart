@@ -2,14 +2,13 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/gmail/v1.dart' as gmail;
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:html/parser.dart' as htmlparser;
-import 'package:html/dom.dart';
+import 'package:html/parser.dart' as html_parser;
 import '../models/subscription.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 
 class EmailScannerService {
   final GoogleSignIn _googleSignIn = GoogleSignIn(
-    scopes: [
+    scopes: const [
       'email',
       'https://www.googleapis.com/auth/gmail.readonly',
     ],
@@ -48,7 +47,7 @@ class EmailScannerService {
       }
 
       // Set date range to last 2 months
-      final twoMonthsAgo = DateTime.now().subtract(Duration(days: 60));
+      final twoMonthsAgo = DateTime.now().subtract(const Duration(days: 60));
       final query = 'after:${twoMonthsAgo.year}/${twoMonthsAgo.month.toString().padLeft(2, '0')}/${twoMonthsAgo.day.toString().padLeft(2, '0')}';
 
       String? pageToken;
@@ -110,7 +109,7 @@ class EmailScannerService {
 
       final messages = await gmailApi.users.messages.list(
         'me',
-        maxResults: 20,  // Adjust this number as needed
+        maxResults: 20,
       );
 
       if (messages.messages == null) {
@@ -141,12 +140,11 @@ class EmailScannerService {
       final client = GoogleAuthClient(headers);
       final gmailApi = gmail.GmailApi(client);
 
-      // Encode the search query to ensure it's properly formatted for the API
       final encodedQuery = Uri.encodeComponent(searchQuery);
 
       final messages = await gmailApi.users.messages.list(
         'me',
-        maxResults: 20,  // Adjust this number as needed
+        maxResults: 20,
         q: encodedQuery,
       );
 
@@ -167,7 +165,57 @@ class EmailScannerService {
     }
   }
 
-  // New public method to get email body
+  Future<List<gmail.Message>> fetchSubscriptionHistory(String subscriptionName) async {
+    try {
+      final GoogleSignInAccount? account = await _googleSignIn.signIn();
+      if (account == null) {
+        throw Exception('Sign-in failed');
+      }
+
+      final headers = await account.authHeaders;
+      final client = GoogleAuthClient(headers);
+      final gmailApi = gmail.GmailApi(client);
+
+      // Create a more specific query based on the subscription name
+      final query = 'from:$subscriptionName (subject:"Your Rogers bill is now available" OR subject:"Ray, thank you for your payment") after:${DateTime.now().year - 1}-01-01';
+
+      final messages = await gmailApi.users.messages.list(
+        'me',
+        maxResults: 100,
+        q: query,
+      );
+
+      if (messages.messages == null) {
+        return [];
+      }
+
+      final fullMessages = await Future.wait(
+          messages.messages!.map((message) => gmailApi.users.messages.get('me', message.id!))
+      );
+
+      // Filter messages to ensure they are related to the subscription
+      final filteredMessages = fullMessages.where((message) {
+        final subject = message.payload?.headers
+            ?.firstWhere((header) => header.name == 'Subject', orElse: () => gmail.MessagePartHeader())
+            .value ?? '';
+        final from = message.payload?.headers
+            ?.firstWhere((header) => header.name == 'From', orElse: () => gmail.MessagePartHeader())
+            .value ?? '';
+
+        return _isSubscriptionEmail(subscriptionName, subject, from);
+      }).toList();
+
+      filteredMessages.sort((a, b) => int.parse(b.internalDate ?? '0').compareTo(int.parse(a.internalDate ?? '0')));
+
+      return filteredMessages;
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error fetching subscription history: $e');
+      }
+      return [];
+    }
+  }
+
   String getEmailBody(gmail.Message message) {
     return _getEmailBody(message);
   }
@@ -181,12 +229,11 @@ class EmailScannerService {
         .value ?? '';
     final body = _getEmailBody(message);
 
-    // Remove email addresses from the text to avoid false matches
     final cleanSubject = _removeEmailAddresses(subject);
     final cleanBody = _removeEmailAddresses(body);
 
     for (var subscription in subscriptions) {
-      if (_isSubscriptionEmail(subscription, cleanSubject, cleanBody, from)) {
+      if (_isSubscriptionEmail(subscription.name, cleanSubject, from)) {
         return SubscriptionEmail(
           subscription: subscription,
           subject: subject,
@@ -204,10 +251,8 @@ class EmailScannerService {
   String _getEmailBody(gmail.Message message) {
     if (message.payload == null) return '';
 
-    // First, try to get the body from the payload
     String body = _getBodyFromPart(message.payload!);
 
-    // If the body is still empty, try to get it from the parts
     if (body.isEmpty && message.payload!.parts != null) {
       for (var part in message.payload!.parts!) {
         body = _getBodyFromPart(part);
@@ -215,10 +260,8 @@ class EmailScannerService {
       }
     }
 
-    // Decode the body
     body = _decodeBody(body);
 
-    // If the body is HTML, extract the text
     if (body.toLowerCase().contains('<html')) {
       body = _extractTextFromHtml(body);
     }
@@ -245,42 +288,43 @@ class EmailScannerService {
       if (kDebugMode) {
         print('Error decoding body: $e');
       }
-      return body; // Return original if decoding fails
+      return body;
     }
   }
 
   String _extractTextFromHtml(String htmlString) {
-    final document = htmlparser.parse(htmlString);
+    final document = html_parser.parse(htmlString);
     final String parsedString = document.body?.text ?? '';
     return parsedString;
   }
 
-  bool _isSubscriptionEmail(Subscription subscription, String subject, String body, String from) {
-    final nameLower = subscription.name.toLowerCase();
-    final subjectLower = subject.toLowerCase();
-    final bodyLower = body.toLowerCase();
-    final fromLower = from.toLowerCase();
+  bool _isSubscriptionEmail(String subscriptionName, String subject, String from) {
+    // Check if the email is from the subscription provider
+    if (!from.toLowerCase().contains(subscriptionName.toLowerCase())) {
+      return false;
+    }
 
-    // Check for required keywords
-    final requiredKeywords = ['bill', 'account', 'balance', 'payment'];
-
-    // Check if the subscription name is mentioned (ignoring case)
-    bool containsSubscriptionName = subjectLower.contains(nameLower) ||
-        bodyLower.contains(nameLower) ||
-        fromLower.contains(nameLower);
-
-    // Check if at least one of the required keywords is present
-    bool containsRequiredKeyword = requiredKeywords.any((keyword) =>
-    subjectLower.contains(keyword) || bodyLower.contains(keyword));
-
-    // Return true only if both conditions are met
-    return containsSubscriptionName && containsRequiredKeyword;
+    // Check if the subject matches exactly one of the two desired types
+    return subject == 'Your Rogers bill is now available' ||
+        subject == 'Ray, thank you for your payment';
   }
 
   String _removeEmailAddresses(String text) {
-    // This regex pattern matches most email address formats
     final emailPattern = RegExp(r'\b[\w\.-]+@[\w\.-]+\.\w+\b');
     return text.replaceAll(emailPattern, '');
+  }
+
+  String? _extractEmailAddress(String from) {
+    final match = RegExp(r'<(.+)>').firstMatch(from);
+    return match?.group(1);
+  }
+
+  String _extractKeywordFromSubject(String subject) {
+    final words = subject.split(' ');
+    return words.firstWhere(
+          (word) => !['re:', 'fwd:', 'fw:'].contains(word.toLowerCase()),
+      orElse: () => '',
+    );
   }
 }
 
