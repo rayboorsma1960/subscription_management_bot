@@ -1,4 +1,3 @@
-// scan_results_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/subscription.dart';
@@ -6,7 +5,7 @@ import '../services/email_scanner_service.dart';
 import '../providers/subscription_provider.dart';
 
 class ScanResultsScreen extends StatefulWidget {
-  const ScanResultsScreen({super.key});
+  const ScanResultsScreen({Key? key}) : super(key: key);
 
   @override
   State<ScanResultsScreen> createState() => _ScanResultsScreenState();
@@ -14,8 +13,8 @@ class ScanResultsScreen extends StatefulWidget {
 
 class _ScanResultsScreenState extends State<ScanResultsScreen> {
   final EmailScannerService _scannerService = EmailScannerService();
-  List<PotentialSubscription> _potentialSubscriptions = [];
-  int _currentIndex = 0;
+  Map<Subscription, List<SubscriptionEmail>> _subscriptionEmails = {};
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -24,80 +23,88 @@ class _ScanResultsScreenState extends State<ScanResultsScreen> {
   }
 
   Future<void> _scanEmails() async {
-    final results = await _scannerService.scanEmails();
+    final subscriptionProvider = Provider.of<SubscriptionProvider>(context, listen: false);
+    final subscriptions = subscriptionProvider.subscriptions;
+    final results = await _scannerService.scanEmailsForSubscriptions(subscriptions);
     setState(() {
-      _potentialSubscriptions = results;
+      _subscriptionEmails = results;
+      _isLoading = false;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_potentialSubscriptions.isEmpty) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Scanning Emails')),
-        body: const Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    final current = _potentialSubscriptions[_currentIndex];
-
     return Scaffold(
-      appBar: AppBar(title: const Text('Potential Subscription Found')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Service: ${current.serviceName}',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Text('Price: \$${current.price.toStringAsFixed(2)}'),
-            Text('Next Billing Date: ${_formatDate(DateTime.now().add(current.billingDate))}'),
-            const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton(
-                  onPressed: _addSubscription,
-                  child: const Text('Add'),
+      appBar: AppBar(title: const Text('Subscription Emails')),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _subscriptionEmails.isEmpty
+          ? const Center(child: Text('No subscription emails found'))
+          : ListView.builder(
+        itemCount: _subscriptionEmails.length,
+        itemBuilder: (context, index) {
+          final subscription = _subscriptionEmails.keys.elementAt(index);
+          final emails = _subscriptionEmails[subscription] ?? [];
+          return emails.isEmpty
+              ? const SizedBox.shrink()
+              : ExpansionTile(
+            title: Text('${subscription.name} (${emails.length})'),
+            children: emails.map((email) => Card(
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: ListTile(
+                title: Text(email.subject, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 4),
+                    Text('From: ${email.from}'),
+                    Text('Date: ${_formatDate(email.date)}'),
+                    const SizedBox(height: 4),
+                    Text(
+                      email.snippet,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ),
-                ElevatedButton(
-                  onPressed: _skipSubscription,
-                  child: const Text('Skip'),
-                ),
-              ],
-            ),
-          ],
-        ),
+                onTap: () => _showEmailDetails(email),
+              ),
+            )).toList(),
+          );
+        },
       ),
     );
   }
 
-  void _addSubscription() {
-    final current = _potentialSubscriptions[_currentIndex];
-    final newSubscription = Subscription(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      name: current.serviceName,
-      price: current.price,
-      billingDate: DateTime.now().add(current.billingDate),
+  void _showEmailDetails(SubscriptionEmail email) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(email.subject),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('From: ${email.from}', style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('Date: ${_formatDate(email.date)}'),
+              Text('Subscription: ${email.subscription.name}'),
+              const Divider(),
+              const SizedBox(height: 8),
+              const Text('Body:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Text(email.body),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
     );
-    // Add to provider
-    Provider.of<SubscriptionProvider>(context, listen: false).addSubscription(newSubscription);
-    _nextSubscription();
-  }
-
-  void _skipSubscription() {
-    _nextSubscription();
-  }
-
-  void _nextSubscription() {
-    if (_currentIndex < _potentialSubscriptions.length - 1) {
-      setState(() {
-        _currentIndex++;
-      });
-    } else {
-      Navigator.of(context).pop(); // Return to home screen when done
-    }
   }
 
   String _formatDate(DateTime date) {
