@@ -11,10 +11,12 @@ class EmailAnalysisScreen extends StatefulWidget {
 
 class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
   final EmailScannerService _emailScannerService = EmailScannerService();
-  final GeminiService _geminiService = GeminiService('YOUR_API_KEY_HERE');
+  final GeminiService _geminiService = GeminiService('AIzaSyAOApzWL2G8uTtaY9z4rMHeIx6Jk7ZYx8Y');
   String _analysis = '';
   bool _isLoading = false;
   String _errorMessage = '';
+  int _processedEmails = 0;
+  int _totalEmails = 0;
 
   @override
   void initState() {
@@ -26,17 +28,24 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
     setState(() {
       _isLoading = true;
       _errorMessage = '';
+      _processedEmails = 0;
+      _totalEmails = 0;
     });
 
     try {
-      // Fetch 6 months of emails
-      final emails = await _emailScannerService.fetchSixMonthsEmails();
+      final emails = await _emailScannerService.fetchEmailsFromLastSixMonths(
+        onProgress: (processed, total) {
+          setState(() {
+            _processedEmails = processed;
+            _totalEmails = total;
+          });
+        },
+      );
 
       if (emails.isEmpty) {
         throw Exception('No emails found in the last 6 months');
       }
 
-      // Analyze emails using Gemini API
       final analysis = await _geminiService.analyzeEmails(emails);
 
       setState(() {
@@ -58,7 +67,7 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
         title: const Text('Email Analysis Results'),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? _buildLoadingWidget()
           : _errorMessage.isNotEmpty
           ? _buildErrorWidget()
           : _buildAnalysisWidget(),
@@ -66,6 +75,23 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
         onPressed: _fetchAndAnalyzeEmails,
         child: const Icon(Icons.refresh),
         tooltip: 'Refresh Analysis',
+      ),
+    );
+  }
+
+  Widget _buildLoadingWidget() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 20),
+          Text('Processing emails: $_processedEmails / $_totalEmails'),
+          SizedBox(height: 10),
+          LinearProgressIndicator(
+            value: _totalEmails > 0 ? _processedEmails / _totalEmails : 0,
+          ),
+        ],
       ),
     );
   }

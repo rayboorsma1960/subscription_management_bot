@@ -47,23 +47,23 @@ class GeminiService {
     "Subject: ${email['subject']}\n"
         "From: ${email['from']}\n"
         "Date: ${email['date']}\n"
-        "Body: ${email['body'].substring(0, min(100, email['body'].length))}..."
-    ).join('\n\n');
+        "Body: ${email['body'].substring(0, min(200, email['body'].length))}..."
+    ).join('\n\n---\n\n');
 
     return """
-    Analyze the following 6 months of emails and provide insights about the user's subscriptions, spending habits, and any other notable patterns or information. Focus on:
+    Analyze the following 10 emails and provide insights about their content, themes, and any notable patterns or information. Consider the following aspects:
 
-    1. Identifying recurring subscriptions and their costs
-    2. Total monthly spending on subscriptions
-    3. Trends in subscription usage or changes
-    4. Potential areas for cost-saving
-    5. Any unusual or notable spending patterns
+    1. Common topics or themes across the emails
+    2. Types of senders (e.g., personal contacts, businesses, newsletters)
+    3. Any recurring events or important dates mentioned
+    4. General tone or sentiment of the emails
+    5. Any action items or important information that stands out
 
     Here are the emails:
 
     $emailSummaries
 
-    Please provide a detailed analysis with specific numbers and insights.
+    Please provide a detailed analysis with specific observations and insights.
     """;
   }
 

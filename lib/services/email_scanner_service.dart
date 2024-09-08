@@ -13,7 +13,10 @@ class EmailScannerService {
     ],
   );
 
-  Future<List<Map<String, dynamic>>> fetchSixMonthsEmails() async {
+  Future<List<Map<String, dynamic>>> fetchEmailsFromLastSixMonths({
+    int limit = 200,
+    Function(int processed, int total)? onProgress,
+  }) async {
     try {
       if (kDebugMode) {
         print('Starting email scan for the last 6 months');
@@ -43,35 +46,52 @@ class EmailScannerService {
 
       List<Map<String, dynamic>> allEmails = [];
       String? pageToken;
-      int totalProcessed = 0;
-      const maxToProcess = 1000; // Increased to accommodate 6 months of emails
+      int batchCount = 0;
+      final int maxBatches = 10;
+      int totalEmails = 0;
 
-      do {
+      while (batchCount < maxBatches) {
         final messages = await gmailApi.users.messages.list(
           'me',
-          maxResults: 100,
+          maxResults: 100,  // Request 100 emails at a time
           q: query,
           pageToken: pageToken,
         );
 
-        if (messages.messages != null) {
-          for (var message in messages.messages!) {
-            if (kDebugMode) {
-              print('Processing message ${message.id}');
-            }
-            final fullMessage = await gmailApi.users.messages.get('me', message.id!);
-            allEmails.add(_parseEmail(fullMessage));
+        if (messages.messages == null || messages.messages!.isEmpty) {
+          break;  // No more emails to fetch
+        }
 
-            totalProcessed++;
-            if (totalProcessed >= maxToProcess) break;
-          }
+        totalEmails += messages.messages!.length;
+        final batch = await _fetchEmailBatch(gmailApi, messages.messages!);
+        allEmails.addAll(batch);
+
+        // Report progress
+        if (onProgress != null) {
+          onProgress(allEmails.length, totalEmails);
+        }
+
+        batchCount++;
+        if (kDebugMode) {
+          print('Fetched batch $batchCount of $maxBatches');
+        }
+
+        if (batchCount >= maxBatches || allEmails.length >= limit) {
+          break;
         }
 
         pageToken = messages.nextPageToken;
-      } while (pageToken != null && totalProcessed < maxToProcess);
+        if (pageToken == null) {
+          break;  // No more pages to fetch
+        }
+      }
+
+      if (allEmails.length > limit) {
+        allEmails = allEmails.sublist(0, limit);
+      }
 
       if (kDebugMode) {
-        print('Scan complete. Processed $totalProcessed emails.');
+        print('Scan complete. Processed ${allEmails.length} emails.');
       }
       return allEmails;
     } catch (e) {
@@ -80,6 +100,13 @@ class EmailScannerService {
       }
       return [];
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchEmailBatch(gmail.GmailApi gmailApi, List<gmail.Message> messages) async {
+    final batch = await Future.wait(
+        messages.map((message) => gmailApi.users.messages.get('me', message.id!))
+    );
+    return batch.map(_parseEmail).toList();
   }
 
   Map<String, dynamic> _parseEmail(gmail.Message message) {
@@ -148,24 +175,6 @@ class EmailScannerService {
     final document = html_parser.parse(htmlString);
     final String parsedString = document.body?.text ?? '';
     return parsedString;
-  }
-
-  String _removeEmailAddresses(String text) {
-    final emailPattern = RegExp(r'\b[\w\.-]+@[\w\.-]+\.\w+\b');
-    return text.replaceAll(emailPattern, '');
-  }
-
-  String? _extractEmailAddress(String from) {
-    final match = RegExp(r'<(.+)>').firstMatch(from);
-    return match?.group(1);
-  }
-
-  String _extractKeywordFromSubject(String subject) {
-    final words = subject.split(' ');
-    return words.firstWhere(
-          (word) => !['re:', 'fwd:', 'fw:'].contains(word.toLowerCase()),
-      orElse: () => '',
-    );
   }
 }
 
