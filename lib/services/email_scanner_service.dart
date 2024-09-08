@@ -14,7 +14,7 @@ class EmailScannerService {
   );
 
   Future<List<Map<String, dynamic>>> fetchEmailsFromLastSixMonths({
-    int limit = 200,
+    int limit = 100,
     Function(int processed, int total)? onProgress,
   }) async {
     try {

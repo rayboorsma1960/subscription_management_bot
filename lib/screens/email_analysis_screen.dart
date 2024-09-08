@@ -12,7 +12,7 @@ class EmailAnalysisScreen extends StatefulWidget {
 class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
   final EmailScannerService _emailScannerService = EmailScannerService();
   final GeminiService _geminiService = GeminiService('AIzaSyAOApzWL2G8uTtaY9z4rMHeIx6Jk7ZYx8Y');
-  String _analysis = '';
+  List<AnalysisItem> _analysisItems = [];
   bool _isLoading = false;
   String _errorMessage = '';
   int _processedEmails = 0;
@@ -30,6 +30,7 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
       _errorMessage = '';
       _processedEmails = 0;
       _totalEmails = 0;
+      _analysisItems.clear();
     });
 
     try {
@@ -46,18 +47,56 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
         throw Exception('No emails found in the last 6 months');
       }
 
+      print("Emails fetched: ${emails.length}");
+
       final analysis = await _geminiService.analyzeEmails(emails);
+      print("Raw analysis: $analysis");
+
+      _analysisItems = _parseAnalysis(analysis);
+      print("Parsed analysis items: ${_analysisItems.length}");
 
       setState(() {
-        _analysis = analysis;
         _isLoading = false;
       });
     } catch (e) {
+      print("Error occurred: $e");
       setState(() {
         _errorMessage = 'Error: ${e.toString()}';
         _isLoading = false;
       });
     }
+  }
+
+  List<AnalysisItem> _parseAnalysis(String analysis) {
+    List<AnalysisItem> items = [];
+    List<String> lines = analysis.split('\n');
+    String currentCategory = '';
+    List<String> currentItems = [];
+
+    for (String line in lines) {
+      line = line.trim();
+      if (line.startsWith('**') && line.endsWith('**')) {
+        if (currentCategory.isNotEmpty) {
+          print("Adding category: $currentCategory with ${currentItems.length} items");
+          items.add(AnalysisItem(title: currentCategory, items: List.from(currentItems)));
+          currentItems.clear();
+        }
+        currentCategory = line.replaceAll('*', '').trim();
+      } else if (line.isNotEmpty && currentCategory.isNotEmpty) {
+        // Remove bullet points if present
+        if (line.startsWith('*')) {
+          line = line.substring(1).trim();
+        }
+        currentItems.add(line);
+      }
+    }
+
+    if (currentCategory.isNotEmpty) {
+      print("Adding final category: $currentCategory with ${currentItems.length} items");
+      items.add(AnalysisItem(title: currentCategory, items: currentItems));
+    }
+
+    return items;
   }
 
   @override
@@ -119,9 +158,70 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
   }
 
   Widget _buildAnalysisWidget() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Text(_analysis),
+    if (_analysisItems.isEmpty) {
+      return Center(child: Text('No analysis data available.'));
+    }
+    return ListView.builder(
+      itemCount: _analysisItems.length,
+      itemBuilder: (context, index) {
+        return ExpandableListTile(item: _analysisItems[index]);
+      },
+    );
+  }
+}
+
+class AnalysisItem {
+  final String title;
+  final List<String> items;
+
+  AnalysisItem({required this.title, required this.items});
+}
+
+class ExpandableListTile extends StatefulWidget {
+  final AnalysisItem item;
+
+  const ExpandableListTile({Key? key, required this.item}) : super(key: key);
+
+  @override
+  _ExpandableListTileState createState() => _ExpandableListTileState();
+}
+
+class _ExpandableListTileState extends State<ExpandableListTile> {
+  bool _isExpanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        ListTile(
+          title: Text(widget.item.title, style: TextStyle(fontWeight: FontWeight.bold)),
+          subtitle: Text('${widget.item.items.length} items'),
+          trailing: Icon(_isExpanded ? Icons.expand_less : Icons.expand_more),
+          onTap: () {
+            setState(() {
+              _isExpanded = !_isExpanded;
+            });
+          },
+        ),
+        if (_isExpanded)
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: widget.item.items.map((String detail) => Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('• ', style: TextStyle(fontWeight: FontWeight.bold)),
+                    Expanded(child: Text(detail)),
+                  ],
+                ),
+              )).toList(),
+            ),
+          ),
+        Divider(),
+      ],
     );
   }
 }
