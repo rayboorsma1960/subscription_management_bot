@@ -7,10 +7,10 @@ class EmailAnalysisScreen extends StatefulWidget {
   const EmailAnalysisScreen({Key? key}) : super(key: key);
 
   @override
-  _EmailAnalysisScreenState createState() => _EmailAnalysisScreenState();
+  EmailAnalysisScreenState createState() => EmailAnalysisScreenState();
 }
 
-class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
+class EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
   final EmailScannerService _emailScannerService = EmailScannerService();
   final GeminiService _geminiService = GeminiService('AIzaSyAOApzWL2G8uTtaY9z4rMHeIx6Jk7ZYx8Y');
   List<AnalysisItem> _analysisItems = [];
@@ -107,21 +107,38 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
         ),
         body: TabBarView(
           children: [
-            _isLoading
-                ? _buildLoadingWidget()
-                : _errorMessage.isNotEmpty
-                ? _buildErrorWidget()
-                : _buildAnalysisWidget(),
+            _buildAnalysisTab(),
             _buildAllEmailsWidget(),
           ],
         ),
         floatingActionButton: FloatingActionButton(
           onPressed: _fetchAndAnalyzeEmails,
-          child: const Icon(Icons.refresh),
           tooltip: 'Refresh Analysis',
+          child: const Icon(Icons.refresh),
         ),
       ),
     );
+  }
+
+  Widget _buildAnalysisTab() {
+    if (_isLoading) {
+      return _buildLoadingWidget();
+    } else if (_errorMessage.isNotEmpty) {
+      return _buildErrorWidget();
+    } else {
+      return SingleChildScrollView(
+        child: Column(
+          children: [
+            EmailOrganizationScore(score: _calculateOrganizationScore()),
+            ..._analysisItems.map(_buildAnalysisItemWidget).toList(),
+          ],
+        ),
+      );
+    }
+  }
+
+  Widget _buildAnalysisItemWidget(AnalysisItem item) {
+    return ExpandableListTile(item: item);
   }
 
   Widget _buildLoadingWidget() {
@@ -163,20 +180,6 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
     );
   }
 
-  Widget _buildAnalysisWidget() {
-    if (_analysisItems.isEmpty) {
-      return const Center(child: Text('No analysis data available.'));
-    }
-    return ListView.builder(
-      itemCount: _analysisItems.length,
-      itemBuilder: (context, index) {
-        return ExpandableListTile(
-          item: _analysisItems[index],
-        );
-      },
-    );
-  }
-
   Widget _buildAllEmailsWidget() {
     return ListView.builder(
       itemCount: _emails.length,
@@ -202,6 +205,15 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
       ),
     );
   }
+
+  double _calculateOrganizationScore() {
+    // Placeholder implementation - replace with actual scoring logic
+    int readEmails = _emails.where((email) => email['read'] == true).length;
+    double readPercentage = readEmails / _emails.length;
+
+    // This is a very basic scoring method. You should expand this based on more factors.
+    return readPercentage * 100;
+  }
 }
 
 class AnalysisItem {
@@ -220,10 +232,10 @@ class ExpandableListTile extends StatefulWidget {
   }) : super(key: key);
 
   @override
-  _ExpandableListTileState createState() => _ExpandableListTileState();
+  ExpandableListTileState createState() => ExpandableListTileState();
 }
 
-class _ExpandableListTileState extends State<ExpandableListTile> {
+class ExpandableListTileState extends State<ExpandableListTile> {
   bool _isExpanded = false;
 
   @override
@@ -253,6 +265,60 @@ class _ExpandableListTileState extends State<ExpandableListTile> {
           ),
         const Divider(),
       ],
+    );
+  }
+}
+
+class EmailOrganizationScore extends StatelessWidget {
+  final double score;
+
+  const EmailOrganizationScore({Key? key, required this.score}) : super(key: key);
+
+  String _getScoreDescription(double score) {
+    if (score >= 90) return 'Excellent';
+    if (score >= 75) return 'Good';
+    if (score >= 60) return 'Fair';
+    return 'Needs Improvement';
+  }
+
+  Color _getScoreColor(double score) {
+    if (score >= 90) return Colors.green;
+    if (score >= 75) return Colors.lightGreen;
+    if (score >= 60) return Colors.orange;
+    return Colors.red;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            Text(
+              'Email Organization Score',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 16),
+            CircularProgressIndicator(
+              value: score / 100,
+              backgroundColor: Colors.grey[200],
+              valueColor: AlwaysStoppedAnimation<Color>(_getScoreColor(score)),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              score.toStringAsFixed(0),
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                color: _getScoreColor(score),
+              ),
+            ),
+            Text(
+              _getScoreDescription(score),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
