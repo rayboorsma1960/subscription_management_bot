@@ -2,7 +2,6 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/gmail/v1.dart' as gmail;
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:html/parser.dart' as html_parser;
 import 'package:flutter/foundation.dart' show kDebugMode;
 
 class EmailScannerService {
@@ -18,82 +17,49 @@ class EmailScannerService {
     Function(int processed, int total)? onProgress,
   }) async {
     try {
-      if (kDebugMode) {
-        print('Starting email scan for the last 6 months');
-      }
       final GoogleSignInAccount? account = await _googleSignIn.signIn();
       if (account == null) {
-        if (kDebugMode) {
-          print('Sign-in failed or was cancelled by the user');
-        }
         throw Exception('Sign-in failed');
-      }
-      if (kDebugMode) {
-        print('Successfully signed in as ${account.email}');
       }
 
       final headers = await account.authHeaders;
       final client = GoogleAuthClient(headers);
-
-      if (kDebugMode) {
-        print('Creating Gmail API client');
-      }
       final gmailApi = gmail.GmailApi(client);
 
-      // Set date range to last 6 months
       final sixMonthsAgo = DateTime.now().subtract(const Duration(days: 180));
       final query = 'after:${sixMonthsAgo.year}-${sixMonthsAgo.month.toString().padLeft(2, '0')}-${sixMonthsAgo.day.toString().padLeft(2, '0')}';
 
       List<Map<String, dynamic>> allEmails = [];
       String? pageToken;
-      int batchCount = 0;
-      final int maxBatches = 10;
       int totalEmails = 0;
 
-      while (batchCount < maxBatches) {
+      while (allEmails.length < limit) {
         final messages = await gmailApi.users.messages.list(
           'me',
-          maxResults: 100,  // Request 100 emails at a time
+          maxResults: 100,
           q: query,
           pageToken: pageToken,
         );
 
         if (messages.messages == null || messages.messages!.isEmpty) {
-          break;  // No more emails to fetch
+          break;
         }
 
         totalEmails += messages.messages!.length;
         final batch = await _fetchEmailBatch(gmailApi, messages.messages!);
         allEmails.addAll(batch);
 
-        // Report progress
         if (onProgress != null) {
           onProgress(allEmails.length, totalEmails);
         }
 
-        batchCount++;
-        if (kDebugMode) {
-          print('Fetched batch $batchCount of $maxBatches');
-        }
-
-        if (batchCount >= maxBatches || allEmails.length >= limit) {
+        if (messages.nextPageToken == null) {
           break;
         }
-
         pageToken = messages.nextPageToken;
-        if (pageToken == null) {
-          break;  // No more pages to fetch
-        }
       }
 
-      if (allEmails.length > limit) {
-        allEmails = allEmails.sublist(0, limit);
-      }
-
-      if (kDebugMode) {
-        print('Scan complete. Processed ${allEmails.length} emails.');
-      }
-      return allEmails;
+      return allEmails.take(limit).toList();
     } catch (e) {
       if (kDebugMode) {
         print('Error fetching emails: $e');
@@ -110,16 +76,14 @@ class EmailScannerService {
   }
 
   Map<String, dynamic> _parseEmail(gmail.Message message) {
-    final subject = message.payload?.headers
-        ?.firstWhere((header) => header.name == 'Subject', orElse: () => gmail.MessagePartHeader())
-        .value ?? '';
-    final from = message.payload?.headers
-        ?.firstWhere((header) => header.name == 'From', orElse: () => gmail.MessagePartHeader())
-        .value ?? '';
+    final headers = message.payload?.headers ?? [];
+    final subject = headers.firstWhere((header) => header.name == 'Subject', orElse: () => gmail.MessagePartHeader()).value ?? '';
+    final from = headers.firstWhere((header) => header.name == 'From', orElse: () => gmail.MessagePartHeader()).value ?? '';
     final date = DateTime.fromMillisecondsSinceEpoch(int.parse(message.internalDate ?? '0'));
     final body = _getEmailBody(message);
 
     return {
+      'id': message.id,
       'subject': subject,
       'from': from,
       'date': date.toIso8601String(),
@@ -131,19 +95,7 @@ class EmailScannerService {
     if (message.payload == null) return '';
 
     String body = _getBodyFromPart(message.payload!);
-
-    if (body.isEmpty && message.payload!.parts != null) {
-      for (var part in message.payload!.parts!) {
-        body = _getBodyFromPart(part);
-        if (body.isNotEmpty) break;
-      }
-    }
-
     body = _decodeBody(body);
-
-    if (body.toLowerCase().contains('<html')) {
-      body = _extractTextFromHtml(body);
-    }
 
     return body;
   }
@@ -171,10 +123,29 @@ class EmailScannerService {
     }
   }
 
-  String _extractTextFromHtml(String htmlString) {
-    final document = html_parser.parse(htmlString);
-    final String parsedString = document.body?.text ?? '';
-    return parsedString;
+  Future<String> fetchRawEmail(String emailId) async {
+    try {
+      final GoogleSignInAccount? account = await _googleSignIn.signIn();
+      if (account == null) {
+        throw Exception('Sign-in failed');
+      }
+
+      final headers = await account.authHeaders;
+      final client = GoogleAuthClient(headers);
+      final gmailApi = gmail.GmailApi(client);
+
+      final message = await gmailApi.users.messages.get('me', emailId, format: 'raw');
+      if (message.raw == null) {
+        return 'No raw email content available';
+      }
+
+      return utf8.decode(base64Url.decode(message.raw!));
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error fetching raw email: $e');
+      }
+      return 'Error fetching raw email: $e';
+    }
   }
 }
 

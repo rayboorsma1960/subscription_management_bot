@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/email_scanner_service.dart';
 import '../services/gemini_service.dart';
+import 'raw_email_screen.dart';
 
 class EmailAnalysisScreen extends StatefulWidget {
   const EmailAnalysisScreen({Key? key}) : super(key: key);
@@ -13,6 +14,7 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
   final EmailScannerService _emailScannerService = EmailScannerService();
   final GeminiService _geminiService = GeminiService('AIzaSyAOApzWL2G8uTtaY9z4rMHeIx6Jk7ZYx8Y');
   List<AnalysisItem> _analysisItems = [];
+  List<Map<String, dynamic>> _emails = [];
   bool _isLoading = false;
   String _errorMessage = '';
   int _processedEmails = 0;
@@ -31,10 +33,11 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
       _processedEmails = 0;
       _totalEmails = 0;
       _analysisItems.clear();
+      _emails.clear();
     });
 
     try {
-      final emails = await _emailScannerService.fetchEmailsFromLastSixMonths(
+      _emails = await _emailScannerService.fetchEmailsFromLastSixMonths(
         onProgress: (processed, total) {
           setState(() {
             _processedEmails = processed;
@@ -43,23 +46,18 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
         },
       );
 
-      if (emails.isEmpty) {
+      if (_emails.isEmpty) {
         throw Exception('No emails found in the last 6 months');
       }
 
-      print("Emails fetched: ${emails.length}");
+      final analysisResult = await _geminiService.analyzeEmails(_emails);
 
-      final analysis = await _geminiService.analyzeEmails(emails);
-      print("Raw analysis: $analysis");
-
-      _analysisItems = _parseAnalysis(analysis);
-      print("Parsed analysis items: ${_analysisItems.length}");
+      _analysisItems = _parseAnalysis(analysisResult.analysis);
 
       setState(() {
         _isLoading = false;
       });
     } catch (e) {
-      print("Error occurred: $e");
       setState(() {
         _errorMessage = 'Error: ${e.toString()}';
         _isLoading = false;
@@ -77,22 +75,16 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
       line = line.trim();
       if (line.startsWith('**') && line.endsWith('**')) {
         if (currentCategory.isNotEmpty) {
-          print("Adding category: $currentCategory with ${currentItems.length} items");
           items.add(AnalysisItem(title: currentCategory, items: List.from(currentItems)));
           currentItems.clear();
         }
         currentCategory = line.replaceAll('*', '').trim();
-      } else if (line.isNotEmpty && currentCategory.isNotEmpty) {
-        // Remove bullet points if present
-        if (line.startsWith('*')) {
-          line = line.substring(1).trim();
-        }
-        currentItems.add(line);
+      } else if (line.startsWith('*') && currentCategory.isNotEmpty) {
+        currentItems.add(line.substring(1).trim());
       }
     }
 
     if (currentCategory.isNotEmpty) {
-      print("Adding final category: $currentCategory with ${currentItems.length} items");
       items.add(AnalysisItem(title: currentCategory, items: currentItems));
     }
 
@@ -101,19 +93,33 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Email Analysis Results'),
-      ),
-      body: _isLoading
-          ? _buildLoadingWidget()
-          : _errorMessage.isNotEmpty
-          ? _buildErrorWidget()
-          : _buildAnalysisWidget(),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _fetchAndAnalyzeEmails,
-        child: const Icon(Icons.refresh),
-        tooltip: 'Refresh Analysis',
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Email Analysis'),
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: 'Analysis'),
+              Tab(text: 'All Emails'),
+            ],
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            _isLoading
+                ? _buildLoadingWidget()
+                : _errorMessage.isNotEmpty
+                ? _buildErrorWidget()
+                : _buildAnalysisWidget(),
+            _buildAllEmailsWidget(),
+          ],
+        ),
+        floatingActionButton: FloatingActionButton(
+          onPressed: _fetchAndAnalyzeEmails,
+          child: const Icon(Icons.refresh),
+          tooltip: 'Refresh Analysis',
+        ),
       ),
     );
   }
@@ -123,10 +129,10 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          CircularProgressIndicator(),
-          SizedBox(height: 20),
+          const CircularProgressIndicator(),
+          const SizedBox(height: 20),
           Text('Processing emails: $_processedEmails / $_totalEmails'),
-          SizedBox(height: 10),
+          const SizedBox(height: 10),
           LinearProgressIndicator(
             value: _totalEmails > 0 ? _processedEmails / _totalEmails : 0,
           ),
@@ -159,13 +165,41 @@ class _EmailAnalysisScreenState extends State<EmailAnalysisScreen> {
 
   Widget _buildAnalysisWidget() {
     if (_analysisItems.isEmpty) {
-      return Center(child: Text('No analysis data available.'));
+      return const Center(child: Text('No analysis data available.'));
     }
     return ListView.builder(
       itemCount: _analysisItems.length,
       itemBuilder: (context, index) {
-        return ExpandableListTile(item: _analysisItems[index]);
+        return ExpandableListTile(
+          item: _analysisItems[index],
+        );
       },
+    );
+  }
+
+  Widget _buildAllEmailsWidget() {
+    return ListView.builder(
+      itemCount: _emails.length,
+      itemBuilder: (context, index) {
+        final email = _emails[index];
+        return ListTile(
+          title: Text(email['subject'] ?? 'No Subject'),
+          subtitle: Text(email['from'] ?? 'Unknown Sender'),
+          onTap: () => _navigateToRawEmail(email['id']),
+        );
+      },
+    );
+  }
+
+  void _navigateToRawEmail(String emailId) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => RawEmailScreen(
+          emailId: emailId,
+          emailScannerService: _emailScannerService,
+        ),
+      ),
     );
   }
 }
@@ -180,7 +214,10 @@ class AnalysisItem {
 class ExpandableListTile extends StatefulWidget {
   final AnalysisItem item;
 
-  const ExpandableListTile({Key? key, required this.item}) : super(key: key);
+  const ExpandableListTile({
+    Key? key,
+    required this.item,
+  }) : super(key: key);
 
   @override
   _ExpandableListTileState createState() => _ExpandableListTileState();
@@ -194,7 +231,7 @@ class _ExpandableListTileState extends State<ExpandableListTile> {
     return Column(
       children: [
         ListTile(
-          title: Text(widget.item.title, style: TextStyle(fontWeight: FontWeight.bold)),
+          title: Text(widget.item.title, style: const TextStyle(fontWeight: FontWeight.bold)),
           subtitle: Text('${widget.item.items.length} items'),
           trailing: Icon(_isExpanded ? Icons.expand_less : Icons.expand_more),
           onTap: () {
@@ -205,22 +242,16 @@ class _ExpandableListTileState extends State<ExpandableListTile> {
         ),
         if (_isExpanded)
           Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: widget.item.items.map((String detail) => Padding(
-                padding: EdgeInsets.only(bottom: 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('• ', style: TextStyle(fontWeight: FontWeight.bold)),
-                    Expanded(child: Text(detail)),
-                  ],
-                ),
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text('• $detail'),
               )).toList(),
             ),
           ),
-        Divider(),
+        const Divider(),
       ],
     );
   }
